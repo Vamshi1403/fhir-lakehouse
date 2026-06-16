@@ -1,29 +1,49 @@
 # FHIR API Data Ingestion & Analytics
+Medallion Lakehouse pipeline on Microsoft Fabric — config-driven, incremental, SCD Type 2
 
 ## Architecture
-Medallion Lakehouse on Microsoft Fabric
+```
+FHIR API (hapi.fhir.org)
+     ↓
+Raw Layer     → Files/raw/{resource}/{date}/response.json
+     ↓
+Bronze Layer  → bronze.tbl_{resource}     (Delta, append-only)
+     ↓
+Silver Layer  → silver.tbl_{resource}     (Delta, SCD Type 2)
+     ↓
+Gold Layer    → gold.vw_{dim/fact}_{resource}  (Views)
+```
 
-| Layer  | Location | Format |
-|--------|----------|--------|
-| Raw    | Files/raw/resource/date/ | JSON |
-| Bronze | bronze.patient/encounter/observation/condition | Delta |
-| Silver | silver.patient/encounter/observation/condition | Delta + SCD2 |
-| Gold   | gold.dim_patient/fact_encounter/fact_observation/fact_condition | Views |
-
-## Pipeline
-`pl_master_fhir` — runs daily, orchestrates all 3 notebooks in sequence
+## Naming Conventions
+| Object | Prefix | Example |
+|--------|--------|---------|
+| Tables | `tbl_` | `bronze.tbl_patient` |
+| Views  | `vw_`  | `gold.vw_dim_patient` |
 
 ## Notebooks
 | Notebook | Purpose |
 |----------|---------|
-| 01_bronze_ingest_fhir | Fetch FHIR API → raw JSON → bronze Delta |
-| 02_silver_transform_fhir | Parse → dedupe → SCD Type 2 merge |
-| 03_gold_views_fhir | Reporting views on silver current records |
+| `00_config` | Central config — all settings, naming helper functions |
+| `01_bronze_ingest_fhir` | Fetch FHIR API → save raw JSON → append to bronze Delta |
+| `02_silver_transform_fhir` | Parse raw_json → deduplicate → SCD Type 2 merge |
+| `03_gold_views_fhir` | Create reporting views from silver current records |
 
-## Resources Ingested
-- Patient · Encounter · Observation · Condition
-- 3 days of data with pagination (50 records/page, 5 pages max)
+## Pipeline — `pl_master_fhir`
+Runs daily, orchestrates notebooks in this order:
+```
+Bronze_Ingest →(success)→ Silver_Transform →(success)→ Gold_Views
+```
+Each notebook runs `%run 00_config` at start — no hardcoding anywhere.
 
-## SCD Type 2
-All silver tables track:
-- `effective_from` / `effective_to` / `is_current` / `row_hash`
+## Table Inventory
+| Bronze | Silver | Gold |
+|--------|--------|------|
+| `bronze.tbl_patient` | `silver.tbl_patient` | `gold.vw_dim_patient` |
+| `bronze.tbl_encounter` | `silver.tbl_encounter` | `gold.vw_fact_encounter` |
+| `bronze.tbl_observation` | `silver.tbl_observation` | `gold.vw_fact_observation` |
+| `bronze.tbl_condition` | `silver.tbl_condition` | `gold.vw_fact_condition` |
+
+## Metadata Columns — Bronze (all tables)
+| Column | Description |
+|--------|-------------|
+| `resource_type` | FHIR resource name
